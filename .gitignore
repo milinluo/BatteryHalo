@@ -1,0 +1,19 @@
+﻿# Local runtime state (never publish device names or user settings)
+设置.ini
+设备记录.txt
+上次读数.txt
+设备排序.txt
+
+# Build outputs and release bundles
+电环.exe
+三模设备电量.exe
+三模设备电量.exe.bak
+AirPodsHelper.exe
+*.zip
+发布/
+
+# Local debug captures
+_*.png
+AirPods连接验证.png
+*.png.txt
+app.ico.bak

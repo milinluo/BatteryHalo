@@ -1,0 +1,10 @@
+32feet.NET (InTheHand.Net.Personal.dll)
+Copyright (c) Alan McFarlane, Peter Foot
+Project: http://32feet.codeplex.com/
+License: http://32feet.codeplex.com/license
+Used for classic Bluetooth RFCOMM/HFP battery reading.
+
+AirPods protocol/state logic is based on AirPodsDesktop
+(https://github.com/SpriteOvO/AirPodsDesktop, GPLv3).
+The helper reimplements the Apple Continuity Proximity Pairing packet parsing
+for local device status display.
