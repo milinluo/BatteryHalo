@@ -22,6 +22,13 @@ namespace TriMode
         const int CollapsedW = 78;
         const int BottomPad = 8;
         const float Radius = 11f;   // fallback radius used by card helpers
+        const int GWL_EXSTYLE = -20;
+        const int WS_EX_LAYERED = 0x00080000;
+        const int WS_EX_TRANSPARENT = 0x00000020;
+        [DllImport("user32.dll")]
+        static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+        [DllImport("user32.dll")]
+        static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
         float _cornerRadius = 11f;
 
         ScanResult _data;
@@ -877,9 +884,7 @@ namespace TriMode
             if (_showMode) parts.Add(d.ModeText);
             if (d.Cached) parts.Add("休眠中");
             if (d.Extra.Length > 0) parts.Add(d.Extra);
-            if (d.Cached && d.CachedAt != DateTime.MinValue)
-                parts.Add("上次 " + d.CachedAt.ToString("HH:mm"));
-            else if (d.Battery < 0 && d.Error.Length > 0) parts.Add(d.Error);
+            if (d.Battery < 0 && d.Error.Length > 0) parts.Add(d.Error);
             if (parts.Count == 0) parts.Add(d.Battery >= 0 ? "设备在线" : "无读数");
             return string.Join(" · ", parts.ToArray());
         }
@@ -2130,6 +2135,8 @@ namespace TriMode
             if (scaleChanged || showOfflineChanged) ApplySize(DataRowCount());
             if (scaleChanged || positionChanged) ApplyPosition(_settings.Position);
             UpdateShape();
+            SetOpacity(_settings.Opacity);
+            ApplyWindowEffects();
             Invalidate();
             UpdateTray();
 
@@ -2187,6 +2194,38 @@ namespace TriMode
             ApplySize(DataRowCount());
             Invalidate();
             if (PreviewChanged != null) PreviewChanged(this, EventArgs.Empty);
+        }
+
+        public void SetOpacity(int percent)
+        {
+            percent = AppSettings.NormalizeOpacity(percent);
+            try { Opacity = percent / 100f; } catch { }
+            if (_settings != null) _settings.Opacity = percent;
+            ApplyWindowEffects();
+        }
+
+        void ApplyWindowEffects()
+        {
+            if (!IsHandleCreated) return;
+            try
+            {
+                int style = GetWindowLong(Handle, GWL_EXSTYLE);
+                if (_settings != null && _settings.ClickThrough)
+                    style |= WS_EX_TRANSPARENT | WS_EX_LAYERED;
+                else
+                    style &= ~WS_EX_TRANSPARENT;
+                if (_settings != null && _settings.Opacity < 100)
+                    style |= WS_EX_LAYERED;
+                SetWindowLong(Handle, GWL_EXSTYLE, style);
+            }
+            catch { }
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            if (_settings != null) SetOpacity(_settings.Opacity);
+            else ApplyWindowEffects();
         }
 
         void ApplyPosition(int pos)
@@ -2368,6 +2407,7 @@ namespace TriMode
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
+            ApplyWindowEffects();
             ApplyPosition(_settings.Position);
             if (!_captureMode && _data == null) _skeletonTimer.Start();
             UpdateMotionTimer();

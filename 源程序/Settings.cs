@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -26,6 +26,8 @@ namespace TriMode
         public bool ShowMode = true;
         public bool ShowOffline = false;
         public bool AllowDeviceSort = true;
+        public bool ClickThrough = false;
+        public int Opacity = 100;
         public int HeadsetRefreshMinutes = 15;
         public int CornerRadius = 11;
         public bool AutoFlattenCorners = true;
@@ -59,6 +61,8 @@ namespace TriMode
             s.ShowMode = ShowMode;
             s.ShowOffline = ShowOffline;
             s.AllowDeviceSort = AllowDeviceSort;
+            s.ClickThrough = ClickThrough;
+            s.Opacity = Opacity;
             s.HeadsetRefreshMinutes = HeadsetRefreshMinutes;
             s.CornerRadius = CornerRadius;
             s.AutoFlattenCorners = AutoFlattenCorners;
@@ -137,6 +141,12 @@ namespace TriMode
                     else if (key == "showmode") s.ShowMode = IsTrue(val);
                     else if (key == "showoffline") s.ShowOffline = IsTrue(val);
                     else if (key == "allowdevicesort") s.AllowDeviceSort = IsTrue(val);
+                    else if (key == "clickthrough") s.ClickThrough = IsTrue(val);
+                    else if (key == "opacity")
+                    {
+                        int ov;
+                        if (int.TryParse(val, out ov)) s.Opacity = NormalizeOpacity(ov);
+                    }
                     else if (key == "headsetrefresh")
                     {
                         int rm;
@@ -180,6 +190,8 @@ namespace TriMode
             sb.AppendLine("showMode=" + (ShowMode ? "1" : "0"));
             sb.AppendLine("showOffline=" + (ShowOffline ? "1" : "0"));
             sb.AppendLine("allowDeviceSort=" + (AllowDeviceSort ? "1" : "0"));
+            sb.AppendLine("clickThrough=" + (ClickThrough ? "1" : "0"));
+            sb.AppendLine("opacity=" + NormalizeOpacity(Opacity));
             sb.AppendLine("headsetRefresh=" + NormalizeRefresh(HeadsetRefreshMinutes));
             sb.AppendLine("cornerRadius=" + NormalizeRadius(CornerRadius));
             sb.AppendLine("autoFlatten=" + (AutoFlattenCorners ? "1" : "0"));
@@ -191,6 +203,11 @@ namespace TriMode
             sb.AppendLine("customFavoritePairs=" + CustomFavoritePairs);
             sb.AppendLine("customSecondaryFavorites=" + CustomSecondaryFavorites);
             File.WriteAllText(SettingsPath, sb.ToString(), new UTF8Encoding(false));
+        }
+
+        public static int NormalizeOpacity(int value)
+        {
+            return Math.Max(30, Math.Min(100, value));
         }
 
         public static int NormalizeRadius(int radius)
@@ -410,7 +427,16 @@ namespace TriMode
         RectangleF _showOfflineToggle;
         RectangleF _previewRangeToggle;
         RectangleF _sortToggle;
+        RectangleF _opacityTrack;
+        bool _opacityPressed;
+        bool _opacityDragMoved;
+        int _opacityPressTick;
+        PointF _opacityPressPoint;
+        int _opacityTarget;
+        float _opacityDisplay;
+        bool _opacitySavePending;
         RectangleF _airPodsEarToggle;
+        RectangleF _clickThroughToggle;
         RectangleF _ignoreClearButton;
         RectangleF _refreshMinutesTrack;
         bool _panelExpanded;
@@ -480,6 +506,8 @@ namespace TriMode
             if (_owner != null) _owner.PanelStateChanged += OwnerPanelStateChanged;
             if (_owner != null) _owner.PreviewChanged += OwnerPreviewChanged;
             _draft = current == null ? AppSettings.Defaults() : current.Clone();
+            _opacityTarget = _draft.Opacity;
+            _opacityDisplay = _draft.Opacity;
             AppSettings.Activate(_draft);
             _draft.Font = UiFonts.Normalize(_draft.Font);
             UiFonts.Family = _draft.Font;
@@ -514,7 +542,7 @@ namespace TriMode
             _appearanceRowsY = contentTitle + 20;
             _displayRowsY = _appearanceRowsY;
             _systemRowY = _appearanceRowsY;
-            _formH = _appearanceRowsY + 6 * 44 + 16;
+            _formH = FormHeight();
             float tabW = (ContentRight - Pad) / 3f;
             for (int i = 0; i < 3; i++)
                 _tabRects[i] = new RectangleF(Pad + i * tabW, _tabY, tabW - 4f, 30f);
@@ -623,6 +651,7 @@ namespace TriMode
                 _showOfflineToggle = RectangleF.Empty;
                 _previewRangeToggle = RectangleF.Empty;
                 _sortToggle = RectangleF.Empty;
+                _opacityTrack = RectangleF.Empty;
             }
             if (_activeTab != 2)
             {
@@ -630,6 +659,7 @@ namespace TriMode
                 _ignoreClearButton = RectangleF.Empty;
                 _refreshMinutesTrack = RectangleF.Empty;
                 _airPodsEarToggle = RectangleF.Empty;
+                _clickThroughToggle = RectangleF.Empty;
             }
         }
         void SelectAudioDevice(bool output, int index)
@@ -672,20 +702,22 @@ namespace TriMode
             _positionTrack = new RectangleF(252, _appearanceRowsY + 220 + 7, 204, 30);
             _modeToggle = new RectangleF(414, _displayRowsY + 11, 42, 22);
             _panelSegment = new RectangleF(252, _displayRowsY + 44 + 7, 204, 30);
-            _autoStartToggle = new RectangleF(414, _systemRowY + 11, 42, 22);
+            _autoStartToggle = new RectangleF(414, _systemRowY + 44 + 11, 42, 22);
             _autoFlattenToggle = new RectangleF(414, _displayRowsY + 88 + 11, 42, 22);
             _showOfflineToggle = new RectangleF(414, _displayRowsY + 132 + 11, 42, 22);
             _previewRangeToggle = new RectangleF(414, _displayRowsY + 132 + 11, 42, 22);
             _sortToggle = new RectangleF(414, _displayRowsY + 176 + 11, 42, 22);
-            _ignoreClearButton = new RectangleF(384, _systemRowY + 44 + 8, 72, 26);
-            int nextRow = 88;
+            _opacityTrack = new RectangleF(246, _displayRowsY + 220 + 7, 210, 30);
+            _ignoreClearButton = new RectangleF(384, _systemRowY + 88 + 8, 72, 26);
+            int nextRow = 132;
             _refreshMinutesTrack = _showRefreshRow
                 ? new RectangleF(252, _systemRowY + nextRow + 7, 204, 30) : RectangleF.Empty;
             if (_showRefreshRow) nextRow += 44;
             _airPodsEarToggle = _showAirPodsRow
                 ? new RectangleF(414, _systemRowY + nextRow + 11, 42, 22) : RectangleF.Empty;
             if (_showAirPodsRow) nextRow += 44;
-            int outputRow = _systemRowY + nextRow;
+            _clickThroughToggle = new RectangleF(414, _systemRowY + 11, 42, 22);
+            int outputRow = Math.Max(_systemRowY + nextRow, _systemRowY + 176);
             float tabW = (ContentRight - Pad) / 3f;
             for (int i = 0; i < 3; i++)
                 _tabRects[i] = new RectangleF(Pad + i * tabW, _tabY, tabW - 4f, 30f);
@@ -694,9 +726,13 @@ namespace TriMode
 
         int ActiveRowCount()
         {
-            if (_activeTab == 0) return 6;
-            if (_activeTab == 1) return 3;
-            return _showAirPodsRow ? 5 : 4;
+            if (_activeTab != 2) return 6;
+            return (_showRefreshRow && _showAirPodsRow) ? 7 : 6;
+        }
+
+        int FormHeight()
+        {
+            return _appearanceRowsY + ActiveRowCount() * 44 + 16;
         }
 
         bool HasAppleDevice()
@@ -738,7 +774,7 @@ namespace TriMode
             _appearanceRowsY = contentTitle + 20;
             _displayRowsY = _appearanceRowsY;
             _systemRowY = _appearanceRowsY;
-            _formH = _appearanceRowsY + 6 * 44 + 16;
+            _formH = FormHeight();
 
             LayoutControls();
 
@@ -982,17 +1018,21 @@ namespace TriMode
                 !_draft.ShowOffline, _previewRangeToggle, "previewrange");
 
             DrawRowLine(g, _displayRowsY + 176);
-            DrawToggleRow(g, "拖动排序", "主面板和设置界面可拖动 · 仅已连接设备", _displayRowsY + 176,
+            DrawToggleRow(g, "拖动排序", "主面板/设置可拖动 · 仅已连接设备", _displayRowsY + 176,
                 _draft.AllowDeviceSort, _sortToggle, "devicesort");
+            DrawRowLine(g, _displayRowsY + 220);
+            DrawRowText(g, "透明度", "主面板不透明度 · " + _draft.Opacity + "%", _displayRowsY + 220);
+            DrawOpacitySlider(g, _opacityTrack);
         }
 
         void DrawSystem(Graphics g)
         {
             DrawSection(g, _systemTitleY, "03", "系统");
-            DrawToggleRow(g, "开机自启", "登录 Windows 后自动运行", _systemRowY, _autoStartDraft, _autoStartToggle, "autostart");
+            DrawToggleRow(g, "点击穿透", "鼠标穿透主面板 · 托盘设置关闭", _systemRowY, _draft.ClickThrough, _clickThroughToggle, "clickthrough");
+            DrawToggleRow(g, "开机自启", "登录 Windows 后自动运行", _systemRowY + 44, _autoStartDraft, _autoStartToggle, "autostart");
 
             int ignored = _owner == null ? 0 : _owner.IgnoredCount;
-            DrawRowText(g, "忽略名单", ignored == 0 ? "预览中右键设备可忽略" : "已忽略 " + ignored + " 个 · 列表中可恢复", _systemRowY + 44);
+            DrawRowText(g, "忽略名单", ignored == 0 ? "预览中右键设备可忽略" : "已忽略 " + ignored + " 个 · 列表中可恢复", _systemRowY + 88);
             Color accent = AppSettings.ThemeColor(_draft.Theme);
             using (GraphicsPath gp = Round(_ignoreClearButton, _ignoreClearButton.Height / 2f))
             using (SolidBrush b = new SolidBrush(ignored > 0 ? accent : GlassStyle.Tile))
@@ -1007,7 +1047,7 @@ namespace TriMode
             using (SolidBrush b = new SolidBrush(ignored > 0 ? GlassStyle.OnAccent : GlassStyle.Muted))
                 DrawCentered(g, "恢复", f, b, _ignoreClearButton);
 
-            int nextRow = 88;
+            int nextRow = 132;
             if (_showRefreshRow)
             {
                 int[] refreshValues = { 0, 10, 15, 30, 60 };
@@ -1015,7 +1055,7 @@ namespace TriMode
                 for (int i = 0; i < refreshValues.Length; i++)
                     if (refreshValues[i] == _draft.HeadsetRefreshMinutes) { refreshIndex = i; break; }
                 DrawRowText(g, "自动刷新电量时间",
-                    _draft.HeadsetRefreshMinutes == 0 ? "已关闭自动刷新" : "每 " + _draft.HeadsetRefreshMinutes + " 分钟 · 刷新时音频会中断",
+                    _draft.HeadsetRefreshMinutes == 0 ? "已关闭自动刷新" : "每 " + _draft.HeadsetRefreshMinutes + " 分钟 · 刷新时音频可能会中断",
                     _systemRowY + nextRow);
                 DrawSegmented(g, _refreshMinutesTrack, new string[] { "关", "10", "15", "30", "60" },
                     refreshIndex, _animRefresh, "refreshmin");
@@ -1028,8 +1068,9 @@ namespace TriMode
                     _draft.AirPodsEarControl, _airPodsEarToggle, "airpods");
                 nextRow += 44;
             }
-
-            int outputY = _systemRowY + nextRow;
+            if (!_showRefreshRow && !_showAirPodsRow)
+                DrawRowText(g, "音频设备", "Windows 默认输出 / 输入", _systemRowY + 132);
+            int outputY = Math.Max(_systemRowY + nextRow, _systemRowY + 176);
             _audioOutRects.Clear(); _audioInRects.Clear();
             DrawAudioColumnDesign(g, "输出设备", _audioOuts, _audioOutName, 16, 216, outputY, _audioOutRects, "audioout");
             DrawAudioColumnDesign(g, "输入设备", _audioIns, _audioInName, 240, 216, outputY, _audioInRects, "audioin");
@@ -1619,6 +1660,59 @@ namespace TriMode
                 g.DrawLine(p, Pad, y, ContentRight, y);
         }
 
+        int OpacityFromX(float x)
+        {
+            float ratio = (x - (_opacityTrack.X + 12f)) / Math.Max(1f, _opacityTrack.Width - 24f);
+            ratio = Math.Max(0f, Math.Min(1f, ratio));
+            return AppSettings.NormalizeOpacity((int)Math.Round(30f + ratio * 70f));
+        }
+
+        int OpacityTickAt(PointF p)
+        {
+            if (p.Y < _opacityTrack.Y + 18f || p.Y > _opacityTrack.Bottom) return -1;
+            float railX = _opacityTrack.X + 2f;
+            float railW = _opacityTrack.Width - 4f;
+            for (int i = 0; i < 8; i++)
+            {
+                float tx = railX + 9f + (railW - 18f) * (i / 7f);
+                if (Math.Abs(p.X - tx) <= 6f) return 30 + i * 10;
+            }
+            return -1;
+        }
+
+        void DrawOpacitySlider(Graphics g, RectangleF track)
+        {
+            Color accent = AppSettings.ThemeColor(_draft.Theme);
+            float opacity = _opacityDisplay / 100f;
+            int alpha = (int)(110 + opacity * 145f); // 30% -> 153, 100% -> 255
+            RectangleF rail = new RectangleF(track.X + 2f, track.Y + 11f, track.Width - 4f, 8f);
+            using (GraphicsPath gp = Round(rail, 3f))
+            using (SolidBrush b = new SolidBrush(Color.FromArgb(alpha, GlassStyle.Track)))
+                g.FillPath(b, gp);
+
+            float ratio = (_opacityDisplay - 30f) / 70f;
+            float knobX = rail.X + 9f + (rail.Width - 18f) * ratio;
+            RectangleF active = new RectangleF(rail.X, rail.Y, Math.Max(0f, knobX - rail.X), rail.Height);
+            using (GraphicsPath gp = Round(active, 3f))
+            using (SolidBrush b = new SolidBrush(Color.FromArgb(alpha, accent)))
+                g.FillPath(b, gp);
+
+            for (int i = 0; i < 8; i++)
+            {
+                float tx = rail.X + 9f + (rail.Width - 18f) * (i / 7f);
+                using (Pen p = new Pen(Color.FromArgb(210, GlassStyle.Muted), 3f))
+                    g.DrawLine(p, tx, rail.Y + rail.Height + 1f, tx, rail.Y + rail.Height + 8f);
+            }
+
+            RectangleF knob = new RectangleF(knobX - 10f, track.Y + 5f, 20f, 20f);
+            using (SolidBrush glow = new SolidBrush(Color.FromArgb(Math.Min(70, alpha / 3), accent)))
+                g.FillEllipse(glow, knob.X - 3f, knob.Y - 3f, knob.Width + 6f, knob.Height + 6f);
+            using (SolidBrush b = new SolidBrush(Color.FromArgb(alpha, 255, 255, 255)))
+                g.FillEllipse(b, knob);
+            using (Pen p = new Pen(Color.FromArgb(alpha, accent), 2f))
+                g.DrawEllipse(p, knob);
+        }
+
         void DrawSegmented(Graphics g, RectangleF track, string[] labels, int selected, float anim, string idPrefix)
         {
             Color accent = AppSettings.ThemeColor(_draft.Theme);
@@ -1803,6 +1897,17 @@ namespace TriMode
                 if (Math.Abs(next - cur) > 0.001f) _previewAnimY[key] = next;
             }
             if (_previewDragIndex >= 0) moving = true;
+            _opacityDisplay = Approach(_opacityDisplay, _opacityTarget, 0.28f, ref moving);
+            if (_owner != null) _owner.SetOpacity((int)Math.Round(_opacityDisplay));
+            if (Math.Abs(_opacityDisplay - _opacityTarget) < 0.15f)
+            {
+                _opacityDisplay = _opacityTarget;
+                if (_opacitySavePending)
+                {
+                    _opacitySavePending = false;
+                    ApplyLive();
+                }
+            }
 
             if (moving) Invalidate();
             else _animTimer.Stop();
@@ -1847,9 +1952,11 @@ namespace TriMode
             }
             if (_previewRangeToggle.Contains(p)) return "previewrange";
             if (_sortToggle.Contains(p)) return "devicesort";
+            if (_opacityTrack.Contains(p)) return "opacity";
             if (_autoStartToggle.Contains(p)) return "autostart";
             if (_autoFlattenToggle.Contains(p)) return "autoflatten";
             if (_airPodsEarToggle.Contains(p)) return "airpods";
+            if (_clickThroughToggle.Contains(p)) return "clickthrough";
             for (int i = 0; i < _audioOutRects.Count; i++)
                 if (_audioOutRects[i].Contains(p)) return "audioout" + i;
             for (int i = 0; i < _audioInRects.Count; i++)
@@ -1903,6 +2010,22 @@ namespace TriMode
                 Point sp = Cursor.Position;
                 Location = new Point(sp.X - _dragOffset.X, sp.Y - _dragOffset.Y);
                 Cursor = Cursors.Default;
+                base.OnMouseMove(e);
+                return;
+            }
+            if (_opacityPressed && (Control.MouseButtons & MouseButtons.Left) != 0)
+            {
+                if (!_opacityDragMoved &&
+                    (Math.Abs(pt.X - _opacityPressPoint.X) > 3f || Math.Abs(pt.Y - _opacityPressPoint.Y) > 3f))
+                    _opacityDragMoved = true;
+                if (_opacityDragMoved)
+                {
+                    _opacityTarget = OpacityFromX(pt.X);
+                    _opacityDisplay = _opacityTarget;
+                    _draft.Opacity = _opacityTarget;
+                    if (_owner != null) _owner.SetOpacity(_opacityTarget);
+                    Invalidate();
+                }
                 base.OnMouseMove(e);
                 return;
             }
@@ -2074,6 +2197,7 @@ namespace TriMode
                     {
                         _activeTab = i;
                         _hot = "";
+                        UpdatePreviewLayout();
                         LayoutControls();
                         _tabTimer.Start();
                         Invalidate();
@@ -2093,6 +2217,13 @@ namespace TriMode
             if (_airPodsEarToggle.Contains(pt))
             {
                 _draft.AirPodsEarControl = !_draft.AirPodsEarControl;
+                ApplyLive();
+                Invalidate();
+                return;
+            }
+            if (_clickThroughToggle.Contains(pt))
+            {
+                _draft.ClickThrough = !_draft.ClickThrough;
                 ApplyLive();
                 Invalidate();
                 return;
@@ -2151,6 +2282,15 @@ namespace TriMode
                 return;
             }
             if (_sortToggle.Contains(pt)) { _draft.AllowDeviceSort = !_draft.AllowDeviceSort; ApplyLive(); Invalidate(); return; }
+            if (_opacityTrack.Contains(pt))
+            {
+                _opacityPressed = true;
+                _opacityDragMoved = false;
+                _opacityPressTick = OpacityTickAt(pt);
+                _opacityPressPoint = pt;
+                Capture = true;
+                return;
+            }
             if (_refreshMinutesTrack.Contains(pt))
             {
                 int[] vals = { 0, 10, 15, 30, 60 };
@@ -2270,8 +2410,31 @@ namespace TriMode
 
         protected override void OnMouseUp(MouseEventArgs e)
         {
+            PointF pt = LogicalCursor();
             Capture = false;
             _dragging = false;
+            if (_opacityPressed)
+            {
+                _opacityPressed = false;
+                if (_opacityDragMoved)
+                {
+                    _opacityDragMoved = false;
+                    _opacityDisplay = _opacityTarget;
+                    _draft.Opacity = _opacityTarget;
+                    if (_owner != null) _owner.SetOpacity(_opacityTarget);
+                    ApplyLive();
+                    Invalidate();
+                }
+                else
+                {
+                    _opacityTarget = _opacityPressTick >= 0 ? _opacityPressTick : OpacityFromX(pt.X);
+                    _draft.Opacity = _opacityTarget;
+                    _opacitySavePending = true;
+                    _animTimer.Start();
+                    Invalidate();
+                }
+                return;
+            }
             if (_previewDragIndex >= 0)
             {
                 List<string> names = new List<string>();
@@ -2504,9 +2667,7 @@ namespace TriMode
             if (_draft.ShowMode) parts.Add(ModeText(d.Mode));
             if (d.Cached) parts.Add("休眠中");
             if (d.Extra.Length > 0) parts.Add(d.Extra);
-            if (d.Cached && d.CachedAt != DateTime.MinValue)
-                parts.Add("上次 " + d.CachedAt.ToString("HH:mm"));
-            else if (d.Battery < 0 && d.Error.Length > 0) parts.Add(d.Error);
+            if (d.Battery < 0 && d.Error.Length > 0) parts.Add(d.Error);
             if (parts.Count == 0) parts.Add(d.Battery >= 0 ? "设备在线" : "无读数");
             return string.Join(" · ", parts.ToArray());
         }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using System.Threading;
@@ -65,8 +65,7 @@ namespace TriMode
                 if (Cached) sb.Append(" · 休眠中");
                 if (Voltage > 0) sb.Append(" · ").Append((Voltage / 1000.0).ToString("0.00")).Append("V");
                 if (Extra.Length > 0) sb.Append(" · ").Append(Extra);
-                if (Cached && CachedAt != DateTime.MinValue) sb.Append(" · 上次 ").Append(CachedAt.ToString("HH:mm"));
-                else if (Battery < 0 && Error.Length > 0) sb.Append(" · ").Append(Error);
+                if (Battery < 0 && Error.Length > 0) sb.Append(" · ").Append(Error);
                 return sb.ToString();
             }
         }
