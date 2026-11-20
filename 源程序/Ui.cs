@@ -50,6 +50,8 @@ namespace TriMode
         int _scroll;
         RectangleF _closeRect, _gearRect, _chevronRect;
         NotifyIcon _tray;
+        TaskbarBadge _taskbarBadge;
+        ToolStripMenuItem _taskbarItem;
         ThemedContextMenu _menu;
         ThemedContextMenu _panelMenu;
         ToolStripMenuItem _panelToggleItem;
@@ -1933,8 +1935,11 @@ namespace TriMode
             _menu = new ThemedContextMenu();
             _menu.Items.Add("打开面板", null, delegate { ShowPanel(); });
             _menu.Items.Add("设置", null, delegate { ShowSettingsDialog(); });
+            _taskbarItem = new ToolStripMenuItem("任务栏电量", null, delegate { ToggleTaskbarBadge(); });
+            _taskbarItem.Checked = _settings != null && _settings.TaskbarBadge;
+            _menu.Items.Add(_taskbarItem);
             _menu.Items.Add("退出", null, delegate { Quit(); });
-            _menu.Opening += delegate { _trayMenuOpen = true; };
+            _menu.Opening += delegate { _trayMenuOpen = true; if (_taskbarItem != null) _taskbarItem.Checked = _settings != null && _settings.TaskbarBadge; };
             _menu.Closed += delegate { _trayMenuOpen = false; };
             MenuTheme.Apply(_menu, _theme);
 
@@ -1946,7 +1951,7 @@ namespace TriMode
             _tray.DoubleClick += delegate { ShowPanel(); };
         }
 
-        void ShowPanel()
+        public void ShowPanel()
         {
             Show();
             if (IsHandleCreated) Native.ShowWindow(Handle, 5);   // SW_SHOW, in case the native window was hidden
@@ -1958,10 +1963,47 @@ namespace TriMode
             Invalidate();
         }
 
-        void HidePanel()
+        public void HidePanel()
         {
             _liquidTimer.Stop();
             Hide();
+        }
+
+        void UpdateTaskbarBadge(List<Device> devices)
+        {
+            bool show = !_captureMode && _settings != null && _settings.TaskbarBadge && devices != null && devices.Count > 0;
+            if (!show)
+            {
+                if (_taskbarBadge != null && !_taskbarBadge.IsDisposed) _taskbarBadge.Hide();
+                return;
+            }
+            if (_taskbarBadge == null || _taskbarBadge.IsDisposed)
+            {
+                TaskbarBadge.CleanupStale();
+                _taskbarBadge = new TaskbarBadge();
+                _taskbarBadge.Show();
+            }
+            _taskbarBadge.SetDevices(devices, _theme);
+            if (_taskbarItem != null) _taskbarItem.Checked = _settings.TaskbarBadge;
+        }
+
+        void ToggleTaskbarBadge()
+        {
+            if (_settings == null) return;
+            _settings.TaskbarBadge = !_settings.TaskbarBadge;
+            try { _settings.Save(); } catch { }
+            List<Device> active = new List<Device>();
+            lock (_sync)
+            {
+                if (_data != null)
+                    for (int i = 0; i < _data.Devices.Count; i++)
+                    {
+                        Device d = _data.Devices[i];
+                        if (!d.Offline && d.Battery >= 0) active.Add(d);
+                    }
+            }
+            UpdateTaskbarBadge(active);
+            if (_taskbarItem != null) _taskbarItem.Checked = _settings.TaskbarBadge;
         }
 
         void UpdateTray()
@@ -1979,6 +2021,7 @@ namespace TriMode
                 sb.Append('\n').Append(d.Name).Append("  ").Append(lvl);
                 if (d.Battery >= 0) lowest = (lowest == null ? d.Battery : Math.Min(lowest.Value, d.Battery));
             }
+            UpdateTaskbarBadge(devs);
             string txt = sb.ToString();
             if (txt.Length > 63) txt = txt.Substring(0, 63);
             if (txt != _trayText)
@@ -2380,6 +2423,12 @@ namespace TriMode
             if (_settingsForm != null && !_settingsForm.IsDisposed) _settingsForm.Close();
             if (_liquidTimer != null) _liquidTimer.Stop();
             if (_tray != null) { _tray.Visible = false; _tray.Dispose(); }
+            if (_taskbarBadge != null && !_taskbarBadge.IsDisposed)
+            {
+                _taskbarBadge.DestroyNow();
+                _taskbarBadge.Dispose();
+                _taskbarBadge = null;
+            }
             Close();
             Application.Exit();
         }

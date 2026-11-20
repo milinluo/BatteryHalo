@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -27,6 +27,7 @@ namespace TriMode
         public bool ShowOffline = false;
         public bool AllowDeviceSort = true;
         public bool ClickThrough = false;
+        public bool TaskbarBadge = true;
         public int Opacity = 100;
         public int HeadsetRefreshMinutes = 15;
         public int CornerRadius = 11;
@@ -62,6 +63,7 @@ namespace TriMode
             s.ShowOffline = ShowOffline;
             s.AllowDeviceSort = AllowDeviceSort;
             s.ClickThrough = ClickThrough;
+            s.TaskbarBadge = TaskbarBadge;
             s.Opacity = Opacity;
             s.HeadsetRefreshMinutes = HeadsetRefreshMinutes;
             s.CornerRadius = CornerRadius;
@@ -142,6 +144,7 @@ namespace TriMode
                     else if (key == "showoffline") s.ShowOffline = IsTrue(val);
                     else if (key == "allowdevicesort") s.AllowDeviceSort = IsTrue(val);
                     else if (key == "clickthrough") s.ClickThrough = IsTrue(val);
+                    else if (key == "taskbarbadge") s.TaskbarBadge = IsTrue(val);
                     else if (key == "opacity")
                     {
                         int ov;
@@ -191,6 +194,7 @@ namespace TriMode
             sb.AppendLine("showOffline=" + (ShowOffline ? "1" : "0"));
             sb.AppendLine("allowDeviceSort=" + (AllowDeviceSort ? "1" : "0"));
             sb.AppendLine("clickThrough=" + (ClickThrough ? "1" : "0"));
+            sb.AppendLine("taskbarBadge=" + (TaskbarBadge ? "1" : "0"));
             sb.AppendLine("opacity=" + NormalizeOpacity(Opacity));
             sb.AppendLine("headsetRefresh=" + NormalizeRefresh(HeadsetRefreshMinutes));
             sb.AppendLine("cornerRadius=" + NormalizeRadius(CornerRadius));
@@ -437,9 +441,11 @@ namespace TriMode
         bool _opacitySavePending;
         RectangleF _airPodsEarToggle;
         RectangleF _clickThroughToggle;
+        RectangleF _taskbarToggle;
         RectangleF _ignoreClearButton;
         RectangleF _refreshMinutesTrack;
         bool _panelExpanded;
+        bool _panelClosed;
         bool _showAirPodsRow;
         bool _showRefreshRow;
         ulong _hotPreviewRefresh;
@@ -564,21 +570,17 @@ namespace TriMode
             MaximizeBox = false;
             MinimizeBox = false;
             KeyPreview = true;
-            AllowTransparency = true;    // transparent outside the rounded background path
+            AllowTransparency = false;
             BackColor = Color.FromArgb(18, 18, 23);
-            Opacity = 0;                 // avoid the default white window before the first paint
             Text = "设置 - 电环";
             ClientSize = new Size((int)Math.Round(W * _scale), (int)Math.Round(_formH * _scale));
-
-            using (GraphicsPath gp = Round(new RectangleF(0, 0, Width, Height), WindowRadius * _scale))
-            {
-                Region = new Region(gp);
-            }
+            ApplyWindowShape();
 
             _headerDrag = new RectangleF(0, 0, W, 78);
             _closeRect = new RectangleF(W - 46, 12, 30, 30);
             LayoutControls();
             _panelExpanded = owner == null || !owner.IsPanelCollapsed;
+            _panelClosed = owner != null && !owner.Visible;
 
             _animMaterial = (float)(int)_draft.Material;
             _animMaterialTarget = _animMaterial;
@@ -590,7 +592,7 @@ namespace TriMode
             _animRadiusTarget = _animRadius;
             _animFont = UiFonts.Index(_draft.Font);
             _animFontTarget = _animFont;
-            _animPanel = _panelExpanded ? 1f : 0f;
+            _animPanel = _panelClosed ? 0f : (_panelExpanded ? 2f : 1f);
             _animPanelTarget = _animPanel;
             int[] refreshValuesInit = { 0, 10, 15, 30, 60 };
             _animRefresh = 2f;
@@ -660,6 +662,7 @@ namespace TriMode
                 _refreshMinutesTrack = RectangleF.Empty;
                 _airPodsEarToggle = RectangleF.Empty;
                 _clickThroughToggle = RectangleF.Empty;
+                _taskbarToggle = RectangleF.Empty;
             }
         }
         void SelectAudioDevice(bool output, int index)
@@ -709,7 +712,8 @@ namespace TriMode
             _sortToggle = new RectangleF(414, _displayRowsY + 176 + 11, 42, 22);
             _opacityTrack = new RectangleF(246, _displayRowsY + 220 + 7, 210, 30);
             _ignoreClearButton = new RectangleF(384, _systemRowY + 88 + 8, 72, 26);
-            int nextRow = 132;
+            _taskbarToggle = new RectangleF(414, _systemRowY + 132 + 11, 42, 22);
+            int nextRow = 176;
             _refreshMinutesTrack = _showRefreshRow
                 ? new RectangleF(252, _systemRowY + nextRow + 7, 204, 30) : RectangleF.Empty;
             if (_showRefreshRow) nextRow += 44;
@@ -724,10 +728,16 @@ namespace TriMode
             HideInactiveControls();
         }
 
+        int SystemRowCount()
+        {
+            if (_showRefreshRow && _showAirPodsRow) return 8;
+            if (_showRefreshRow || _showAirPodsRow) return 7;
+            return 6;
+        }
+
         int ActiveRowCount()
         {
-            if (_activeTab != 2) return 6;
-            return (_showRefreshRow && _showAirPodsRow) ? 7 : 6;
+            return SystemRowCount();
         }
 
         int FormHeight()
@@ -779,25 +789,12 @@ namespace TriMode
             LayoutControls();
 
             ClientSize = new Size((int)Math.Round(W * _scale), (int)Math.Round(_formH * _scale));
-            using (GraphicsPath gp = Round(new RectangleF(0, 0, Width, Height), WindowRadius * _scale))
-            {
-                if (Region != null) Region.Dispose();
-                Region = new Region(gp);
-            }
+            ApplyWindowShape();
             Rectangle wa = Screen.PrimaryScreen.WorkingArea;
             if (Top + Height > wa.Bottom)
                 Top = Math.Max(wa.Top, wa.Bottom - Height);
             InvalidateSurface();
             Invalidate();
-        }
-
-        protected override CreateParams CreateParams
-        {
-            get
-            {
-                CreateParams cp = base.CreateParams;
-                return cp;
-            }
         }
 
         void EnableEffects()
@@ -883,12 +880,32 @@ namespace TriMode
             if (!_captureMode)
             {
                 Refresh();
-                Opacity = 1;
             }
             Native.SetForegroundWindow(Handle);
             Activate();
             if (!_captureMode && _scanning) _animTimer.Start();
             if (!_captureMode && HasChargingPreview()) _chargeTimer.Start();
+        }
+
+        void ApplyWindowShape()
+        {
+            // Let DWM round the window. Region clipping is pixel-quantized and
+            // produces visible stair-steps on the corners.
+            if (Region != null) { Region.Dispose(); Region = null; }
+        }
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            try
+            {
+                int pref = 2; // DWMWCP_ROUND
+                DwmSetWindowAttribute(Handle, 33, ref pref, sizeof(int));
+                int dark = 1;
+                DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int));
+                int noBorder = unchecked((int)0xFFFFFFFE);
+                DwmSetWindowAttribute(Handle, 34, ref noBorder, sizeof(int));
+            }
+            catch { }
         }
 
         protected override void OnPaintBackground(PaintEventArgs e)
@@ -1008,8 +1025,9 @@ namespace TriMode
             DrawSection(g, _displayTitleY, "02", "显示");
             DrawToggleRow(g, "显示连接方式", "标注有线 / 2.4G / 蓝牙", _displayRowsY, _draft.ShowMode, _modeToggle, "mode");
             DrawRowLine(g, _displayRowsY + 44);
-            DrawRowText(g, "面板状态", "收起 / 展开主面板", _displayRowsY + 44);
-            DrawSegmented(g, _panelSegment, new string[] { "收起", "展开" }, _panelExpanded ? 1 : 0, _animPanel, "panel");
+            DrawRowText(g, "面板状态", "关闭 / 收起 / 展开主面板", _displayRowsY + 44);
+            int panelIndex = _panelClosed ? 0 : (_panelExpanded ? 2 : 1);
+            DrawSegmented(g, _panelSegment, new string[] { "关闭", "收起", "展开" }, panelIndex, _animPanel, "panel");
             DrawRowLine(g, _displayRowsY + 88);
             DrawToggleRow(g, "贴边自动直角", "靠近屏幕边缘时取消贴边圆角", _displayRowsY + 88,
                 _draft.AutoFlattenCorners, _autoFlattenToggle, "autoflatten");
@@ -1047,7 +1065,10 @@ namespace TriMode
             using (SolidBrush b = new SolidBrush(ignored > 0 ? GlassStyle.OnAccent : GlassStyle.Muted))
                 DrawCentered(g, "恢复", f, b, _ignoreClearButton);
 
-            int nextRow = 132;
+            DrawToggleRow(g, "任务栏电量", "在任务栏通知区域左侧显示设备电量",
+                _systemRowY + 132, _draft.TaskbarBadge, _taskbarToggle, "taskbar");
+
+            int nextRow = 176;
             if (_showRefreshRow)
             {
                 int[] refreshValues = { 0, 10, 15, 30, 60 };
@@ -1068,8 +1089,6 @@ namespace TriMode
                     _draft.AirPodsEarControl, _airPodsEarToggle, "airpods");
                 nextRow += 44;
             }
-            if (!_showRefreshRow && !_showAirPodsRow)
-                DrawRowText(g, "音频设备", "Windows 默认输出 / 输入", _systemRowY + 132);
             int outputY = Math.Max(_systemRowY + nextRow, _systemRowY + 176);
             _audioOutRects.Clear(); _audioInRects.Clear();
             DrawAudioColumnDesign(g, "输出设备", _audioOuts, _audioOutName, 16, 216, outputY, _audioOutRects, "audioout");
@@ -1117,7 +1136,10 @@ namespace TriMode
                 if (_draft.Material == GlassMaterial.Solid)
                 {
                     using (SolidBrush b = new SolidBrush(GlassStyle.SolidBackground(accent)))
+                    {
+                        g.FillRectangle(b, full);
                         g.FillPath(b, gp);
+                    }
                 }
                 else
                 {
@@ -1125,6 +1147,7 @@ namespace TriMode
                         GlassStyle.GradientTop(accent), GlassStyle.GradientBottom(accent),
                         LinearGradientMode.Vertical))
                     {
+                        g.FillRectangle(lg, full);
                         g.FillPath(lg, gp);
                     }
                 }
@@ -1946,8 +1969,8 @@ namespace TriMode
             if (_modeToggle.Contains(p)) return "mode";
             if (_panelSegment.Contains(p))
             {
-                float segW = (_panelSegment.Width - 4f) / 2f;
-                int i = Math.Max(0, Math.Min(1, (int)((p.X - _panelSegment.X - 2f) / segW)));
+                float segW = (_panelSegment.Width - 4f) / 3f;
+                int i = Math.Max(0, Math.Min(2, (int)((p.X - _panelSegment.X - 2f) / segW)));
                 return "panel" + i;
             }
             if (_previewRangeToggle.Contains(p)) return "previewrange";
@@ -1957,6 +1980,7 @@ namespace TriMode
             if (_autoFlattenToggle.Contains(p)) return "autoflatten";
             if (_airPodsEarToggle.Contains(p)) return "airpods";
             if (_clickThroughToggle.Contains(p)) return "clickthrough";
+            if (_taskbarToggle.Contains(p)) return "taskbar";
             for (int i = 0; i < _audioOutRects.Count; i++)
                 if (_audioOutRects[i].Contains(p)) return "audioout" + i;
             for (int i = 0; i < _audioInRects.Count; i++)
@@ -2228,6 +2252,13 @@ namespace TriMode
                 Invalidate();
                 return;
             }
+            if (_taskbarToggle.Contains(pt))
+            {
+                _draft.TaskbarBadge = !_draft.TaskbarBadge;
+                ApplyLive();
+                Invalidate();
+                return;
+            }
 
             for (int i = 0; i < _audioOutRects.Count; i++)
                 if (_audioOutRects[i].Contains(pt)) { SelectAudioDevice(true, i); return; }
@@ -2306,12 +2337,26 @@ namespace TriMode
 
             if (_panelSegment.Contains(pt))
             {
-                float segW = (_panelSegment.Width - 4f) / 2f;
-                int i = Math.Max(0, Math.Min(1, (int)((pt.X - _panelSegment.X - 2f) / segW)));
-                _panelExpanded = i == 1;
+                float segW = (_panelSegment.Width - 4f) / 3f;
+                int i = Math.Max(0, Math.Min(2, (int)((pt.X - _panelSegment.X - 2f) / segW)));
                 _animPanelTarget = i;
                 _animTimer.Start();
-                if (_owner != null) _owner.SetPanelExpanded(_panelExpanded);
+                if (i == 0)
+                {
+                    _panelClosed = true;
+                    _panelExpanded = false;
+                    if (_owner != null) _owner.HidePanel();
+                }
+                else
+                {
+                    _panelClosed = false;
+                    _panelExpanded = i == 2;
+                    if (_owner != null)
+                    {
+                        _owner.ShowPanel();
+                        _owner.SetPanelExpanded(_panelExpanded);
+                    }
+                }
                 Invalidate();
                 return;
             }
@@ -2626,7 +2671,6 @@ namespace TriMode
         public void PrepareForCapture()
         {
             _captureMode = true;
-            Opacity = 1;
             _animTimer.Stop();
             _chargeTimer.Stop();
         }
