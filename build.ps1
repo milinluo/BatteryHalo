@@ -15,6 +15,7 @@ $src = @(
     (Join-Path $root "源程序\Settings.cs"),
     (Join-Path $root "源程序\ColorPairForm.cs"),
     (Join-Path $root "源程序\ColorWheel.cs"),
+    (Join-Path $root "源程序\TaskbarBadge.cs"),
     (Join-Path $root "源程序\Ui.cs")
 )
 $running = Get-Process -Name "电环" -ErrorAction SilentlyContinue
