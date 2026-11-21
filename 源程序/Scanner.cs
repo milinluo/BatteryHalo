@@ -7,7 +7,7 @@ namespace TriMode
 {
     public enum ConnMode { Wired, Receiver24G, Bluetooth }
     public enum DevKind { Mouse, Keyboard, Headset, Other }
-    public enum Provider { None, AsusVendor, VgnVendor, BtProperty }
+    public enum Provider { None, AsusVendor, VgnVendor, BtProperty, MchoseVendor, StandardHid, LogitechHidpp, AtkVendor, AulaVendor, RazerVendor, CompxVendor }
 
     public class Device
     {
@@ -40,6 +40,10 @@ namespace TriMode
         public DateTime CachedAt;
         public string HidPath;
         public int OutLen;
+        public int FeatureLen;
+        public int HidppIndex;
+        public int HidppFeature;
+        public int HidppFeatureId;
         public string UsageTag;
 
         public string ModeText
@@ -101,6 +105,14 @@ namespace TriMode
             return false;
         }
 
+        static bool IsMchose(ushort vid, ushort pid)
+        {
+            if (vid == 0x5253) return true;
+            if (vid == 0x3837)
+                return pid == 0x100C || pid == 0x100B || pid == 0x100A || pid == 0x1001 || pid == 0x1012;
+            return false;
+        }
+
         static Known FindKnown(ushort vid, ushort pid)
         {
             for (int i = 0; i < KnownTable.Length; i++)
@@ -114,7 +126,8 @@ namespace TriMode
             if (HasAny(name, "keyboard", "键盘", "keychron")) return DevKind.Keyboard;
             if (HasAny(name, "headphone", "headset", "airpods", "buds", "wh-", "耳机")) return DevKind.Headset;
             if (HasAny(name, "harpe", "viper", "deathadder", "glorious", "superlight", "龙鳞", "月刃", "战刃")) return DevKind.Mouse;
-            if (HasAny(name, "v98", "v87", "vgn", "keyboard")) return DevKind.Keyboard;
+            if (HasAny(name, "v98", "v87", "vgn", "keyboard", "k7", "k99", "k87", "k75", "gx87", "ace60", "jet75")) return DevKind.Keyboard;
+            if (HasAny(name, "mchose", "迈从", "l7", "m7", "a7", "a5", "g3", "v9", "logitech", "razer", "viper", "deathadder", "aula", "atk", "g pro", "g502", "mx master")) return DevKind.Mouse;
             return DevKind.Other;
         }
 
@@ -144,7 +157,31 @@ namespace TriMode
         static bool IsInputLike(string product)
         {
             return HasAny(product, "mouse", "鼠标", "keyboard", "键盘", "receiver", "dongle", "2.4g", "耳机", "headset", "headphone",
-                "vgn", "v98", "v87", "atk", "madlions", "womier");
+                "vgn", "v98", "v87", "atk", "madlions", "womier", "mchose", "迈从", "logitech", "razer", "aula", "罗技", "雷蛇", "狼蛛");
+        }
+
+        static bool HasCompx(List<HidIface> set)
+        {
+            for (int i = 0; i < set.Count; i++)
+                if (set[i].UsagePage == 0xFF02 && set[i].Usage == 0x0002 && set[i].OutLen >= 17)
+                    return true;
+            return false;
+        }
+
+        static int StandardBattery(List<HidIface> set, out DevKind kind)
+        {
+            kind = DevKind.Other;
+            for (int i = 0; i < set.Count; i++)
+            {
+                DevKind k;
+                int level = Hid.ReadStandardBattery(set[i], out k);
+                if (level >= 0)
+                {
+                    kind = k;
+                    return level;
+                }
+            }
+            return -1;
         }
 
         public static ScanResult Scan()
@@ -181,8 +218,25 @@ namespace TriMode
 
                 if (IsStorageName(product)) continue;
                 Known known = FindKnown(vid, pid);
-                if (known == null && !IsInputLike(product)) continue;
+                bool mchose = known == null && IsMchose(vid, pid);
+                bool logi = known == null && vid == 0x046D;
+                bool aula = known == null && vid == 0x0C45;
+                bool razer = known == null && vid == 0x1532;
+                bool atk = known == null && vid == 0x373B &&
+                    (pid == 0x101B || pid == 0x1016 || pid == 0x111F || pid == 0x111E);
+                bool compx = known == null && !atk && HasCompx(set);
+                DevKind stdKind = DevKind.Other;
+                int stdLevel = (known == null && !mchose && !logi && !atk && !aula && !razer && !compx) ? StandardBattery(set, out stdKind) : -1;
+                if (known == null && !mchose && !logi && !atk && !aula && !razer && !compx && stdLevel < 0 && !IsInputLike(product)) continue;
                 DevKind guessed = known != null ? known.Kind : GuessKind(product);
+                if (stdLevel >= 0 && stdKind != DevKind.Other) guessed = stdKind;
+                if (mchose && guessed == DevKind.Other) guessed = DevKind.Mouse;
+                if (logi && guessed == DevKind.Other) guessed = DevKind.Mouse;
+                if (atk) guessed = (pid == 0x111F || pid == 0x111E) ? DevKind.Keyboard : DevKind.Mouse;
+                if (aula) guessed = DevKind.Keyboard;
+                if (razer && guessed == DevKind.Other) guessed = DevKind.Mouse;
+                if (compx && guessed == DevKind.Other) guessed = DevKind.Mouse;
+                if (stdLevel >= 0 && guessed == DevKind.Other) guessed = DevKind.Mouse;
                 // Only mouse / keyboard / headset classes are shown. This keeps
                 // storage and miscellaneous HID collections out of the widget.
                 if (guessed == DevKind.Other) continue;
@@ -191,11 +245,24 @@ namespace TriMode
                 d.Key = "HID:" + kv.Key;
                 d.RawName = product;
                 d.Name = known != null ? known.Name : CleanName(product);
+                if (mchose && d.Name.Length == 0) d.Name = "MCHOSE";
                 d.Kind = guessed;
                 d.Mode = known != null ? known.Mode : ConnMode.Wired;
-                d.Provider = known != null ? known.Provider : Provider.None;
+                d.Provider = known != null ? known.Provider : (mchose ? Provider.MchoseVendor : (logi ? Provider.LogitechHidpp : (atk ? Provider.AtkVendor : (aula ? Provider.AulaVendor : (razer ? Provider.RazerVendor : (compx ? Provider.CompxVendor : Provider.None))))));
+                if (stdLevel >= 0)
+                {
+                    d.Provider = Provider.StandardHid;
+                    d.Battery = stdLevel;
+                    d.Error = "";
+                }
 
                 if (known == null && HasAny(product, "receiver", "dongle", "2.4g", "接收器")) d.Mode = ConnMode.Receiver24G;
+
+                if (d.Provider == Provider.StandardHid)
+                {
+                    res.Devices.Add(d);
+                    continue;
+                }
 
                 // choose the best channel for a proprietary read
                 HidIface picked = PickChannel(set, d.Provider);
@@ -203,10 +270,13 @@ namespace TriMode
                 {
                     d.HidPath = picked.Path;
                     d.OutLen = picked.OutLen;
+                    d.FeatureLen = picked.FeatureLen;
                     d.UsageTag = picked.Tag;
                     if (d.Provider == Provider.None) d.Provider = Provider.AsusVendor;
                     if (d.Provider == Provider.VgnVendor && d.Mode == ConnMode.Receiver24G)
                         ProbeVgnReceiver(d);
+                    if (d.Provider == Provider.LogitechHidpp)
+                        ProbeLogitech(d);
                 }
                 else if (d.Provider != Provider.None)
                 {
@@ -396,7 +466,26 @@ namespace TriMode
             return Score(b) > Score(a) ? b : a;
         }
 
-        static HidIface PickChannel(List<HidIface> set, Provider provider)        {
+        static HidIface PickChannel(List<HidIface> set, Provider provider)
+        {
+            if (provider == Provider.LogitechHidpp)
+            {
+                for (int i = 0; i < set.Count; i++)
+                    if (set[i].UsagePage == 0xFF00 && set[i].OutLen > 0)
+                        return set[i];
+            }
+            if (provider == Provider.AtkVendor)
+            {
+                for (int i = 0; i < set.Count; i++)
+                    if ((set[i].UsagePage == 0xFF02 || set[i].UsagePage == 0xFF60) && set[i].OutLen > 0)
+                        return set[i];
+            }
+            if (provider == Provider.MchoseVendor)
+            {
+                for (int i = 0; i < set.Count; i++)
+                    if (set[i].UsagePage == 0xFF01 && set[i].Usage == 0x0001 && set[i].FeatureLen >= 65)
+                        return set[i];
+            }
             for (int i = 0; i < set.Count; i++)
             {
                 HidIface f = set[i];
@@ -520,10 +609,256 @@ namespace TriMode
             }
         }
 
+        static int HidppFeature(string path, int deviceIndex, ushort featureId)
+        {
+            for (int longReport = 0; longReport < 2; longReport++)
+            {
+                byte[] req = new byte[longReport == 0 ? 7 : 20];
+                req[0] = (byte)(longReport == 0 ? 0x10 : 0x11);
+                req[1] = (byte)deviceIndex;
+                req[2] = 0x00;                       // root feature
+                req[3] = 0x00;                       // getFeature
+                req[4] = (byte)(featureId & 0xFF);
+                req[5] = (byte)(featureId >> 8);
+                List<byte> reply = Hid.Exchange(path, req, 32, 700, 1);
+                if (reply != null && reply.Count >= 4 && reply[1] == (byte)deviceIndex)
+                {
+                    int featureIndex = reply[2];
+                    if (featureIndex > 0) return featureIndex;
+                }
+            }
+            return 0;
+        }
+
+        static void ProbeLogitech(Device d)
+        {
+            int[] indices = { 0xFF, 1, 2 };
+            ushort[] featureIds = { 0x1001, 0x1000 };
+            for (int f = 0; f < featureIds.Length; f++)
+            {
+                for (int i = 0; i < indices.Length; i++)
+                {
+                    int feature = HidppFeature(d.HidPath, indices[i], featureIds[f]);
+                    if (feature <= 0) continue;
+                    d.HidppIndex = indices[i];
+                    d.HidppFeature = feature;
+                    d.HidppFeatureId = featureIds[f];
+                    ReadLogitech(d);
+                    if (d.Battery >= 0) return;
+                }
+            }
+            d.Error = "HID++ 无响应";
+        }
+
+        static void ReadLogitech(Device d)
+        {
+            if (string.IsNullOrEmpty(d.HidPath) || d.HidppFeature <= 0)
+            {
+                Fail(d, "HID++ 无响应");
+                return;
+            }
+            byte[] req = new byte[7];
+            req[0] = 0x10;
+            req[1] = (byte)d.HidppIndex;
+            req[2] = (byte)d.HidppFeature;
+            req[3] = 0x01; // get level / voltage
+            List<byte> reply = Hid.Exchange(d.HidPath, req, 32, 800, 2);
+            if (reply == null || reply.Count < 5)
+            {
+                Fail(d, "HID++ 无响应");
+                return;
+            }
+            if (d.HidppFeatureId == 0x1001)
+            {
+                d.Battery = reply[4] & 0x7F;
+                d.Error = "";
+                Store(d);
+                return;
+            }
+            int mv = reply[4] | (reply[5] << 8);
+            if (mv >= 2500 && mv <= 5000)
+            {
+                int percent = (int)Math.Round((mv - 3300) * 100.0 / 900.0);
+                d.Battery = Math.Max(0, Math.Min(100, percent));
+                d.Voltage = mv;
+                d.Error = "";
+                Store(d);
+                return;
+            }
+            Fail(d, "HID++ 电量无效");
+        }
+
+        static void ReadCompx(Device d)
+        {
+            byte[] req = new byte[17];
+            req[0] = 0x08; req[1] = 0x04;
+            int sum = 0;
+            for (int i = 0; i < 16; i++) sum += req[i];
+            req[16] = (byte)(0x55 - (sum & 0xFF));
+            List<byte> b = Hid.Exchange(d.HidPath, req, 64, 500, 2);
+            if (b == null || b.Count < 17 || b[0] != 0x08 || b[1] != 0x04)
+            {
+                Fail(d, "Compx 无响应");
+                return;
+            }
+            int check = 0;
+            for (int i = 0; i < 16; i++) check += b[i];
+            if (b[16] != (byte)(0x55 - (check & 0xFF)))
+            {
+                Fail(d, "Compx 校验失败");
+                return;
+            }
+            d.Battery = b[6];
+            d.Charging = b[7] != 0;
+            d.Error = "";
+            Store(d);
+        }
+
+        static void ReadRazer(Device d)
+        {
+            byte[] p = new byte[91];
+            p[2] = 0x1F; p[6] = 0x02; p[7] = 0x07; p[8] = 0x80;
+            byte crc = 0;
+            for (int i = 3; i <= 88; i++) crc ^= p[i];
+            p[89] = crc;
+            byte[] r = Hid.FeatureZeroAccess(d.HidPath, p, 91);
+            if (r == null || (r[1] != 0x01 && r[1] != 0x02))
+            {
+                Fail(d, "Razer 无响应");
+                return;
+            }
+            int raw = r[10];
+            d.Battery = (int)Math.Round(raw / 255.0 * 100);
+            d.Error = "";
+            Store(d);
+        }
+
+        static void ReadAula(Device d)
+        {
+            byte[] req = new byte[33];
+            req[1] = 0xAA; req[2] = 0x10;
+            List<byte> b = Hid.Exchange(d.HidPath, req, 64, 1500, 2);
+            if (b == null || b.Count < 27)
+            {
+                Fail(d, "AULA 无响应");
+                return;
+            }
+            int level = -1;
+            if (b[0] == 0x55 && b[1] == 0x10) level = b[25];
+            else if (b[1] == 0x55 && b[2] == 0x10) level = b[26];
+            if (level < 1 || level > 100)
+            {
+                Fail(d, "AULA 无电量");
+                return;
+            }
+            d.Battery = level;
+            d.Charging = false;
+            d.Error = "";
+            Store(d);
+        }
+
+        static void ReadAtk(Device d)
+        {
+            if (d.Kind == DevKind.Keyboard)
+            {
+                byte[] status = new byte[33];
+                status[1] = 0xAA; status[2] = 0xFD;
+                List<byte> st = Hid.Exchange(d.HidPath, status, 64, 1000, 1);
+                if (st == null || st.Count < 4 || st[1] != 0x55 || st[2] != 0xFD)
+                {
+                    Fail(d, "ATK 无响应");
+                    return;
+                }
+                if (st[3] == 2) { Fail(d, "设备休眠"); return; }
+
+                byte[] req = new byte[33];
+                req[1] = 0x02; req[2] = 0x96; req[3] = 0x24;
+                List<byte> r = Hid.Exchange(d.HidPath, req, 64, 1500, 1);
+                if (r == null || r.Count < 6 || r[1] != 0x02 || r[2] != 0x96 || r[3] != 0x24)
+                {
+                    Fail(d, "ATK 电量读取失败");
+                    return;
+                }
+                d.Charging = r[5] != 0;
+                d.Battery = d.Charging ? -1 : r[4];
+                d.Error = d.Charging ? "充电中" : "";
+                if (!d.Charging) Store(d);
+                return;
+            }
+
+            byte[] m = new byte[17];
+            m[0] = 8; m[1] = 4;
+            int sum = 0;
+            for (int i = 0; i < 16; i++) sum += m[i];
+            m[16] = (byte)(0x55 - (sum & 0xFF));
+            List<byte> b = Hid.Exchange(d.HidPath, m, 64, 1500, 1);
+            if (b == null || b.Count < 8 || b[0] != 8 || b[1] != 4 || b[2] != 0)
+            {
+                Fail(d, "ATK 无响应");
+                return;
+            }
+            d.Battery = b[6];
+            d.Charging = b[7] != 0;
+            d.Error = "";
+            Store(d);
+        }
+
+        static void ReadMchose(Device d)
+        {
+            int len = d.FeatureLen >= 65 ? d.FeatureLen : 65;
+            for (int attempt = 0; attempt < 5; attempt++)
+            {
+                if (attempt > 0) System.Threading.Thread.Sleep(100);
+                byte[] req = new byte[len];
+                for (int i = 0; i < req.Length; i++) req[i] = 0xFF;
+                req[0] = 0x12;              // report id
+                req[1] = 0x06 ^ 0xFF;       // status command, inverted
+                byte[] r = Hid.Feature(d.HidPath, req, len);
+                if (r == null || r.Length < 13 || r[0] != 0x12 || r[1] != 0xF9) continue;
+
+                byte[] p = new byte[11];
+                bool allZero = true;
+                for (int i = 0; i < p.Length; i++)
+                {
+                    p[i] = (byte)(r[2 + i] ^ 0xFF);
+                    if (p[i] != 0) allZero = false;
+                }
+                if (allZero)
+                {
+                    d.Error = "设备休眠";
+                    return;
+                }
+
+                int level = p[9];
+                if (level <= 100)
+                {
+                    d.Battery = level;
+                    d.Charging = p[10] != 0;
+                    d.Error = "";
+                    Store(d);
+                    return;
+                }
+            }
+            Fail(d, "无响应或设备休眠");
+        }
+
         public static void Read(Device d)
         {
             if (d.Provider == Provider.BtProperty) return;   // filled during scan
+            if (d.Provider == Provider.StandardHid) return;  // filled during scan
             if (string.IsNullOrEmpty(d.HidPath)) { Fail(d, "未找到数据通道"); return; }
+
+            if (d.Provider == Provider.LogitechHidpp)
+            {
+                ReadLogitech(d);
+                return;
+            }
+
+            if (d.Provider == Provider.MchoseVendor)
+            {
+                ReadMchose(d);
+                return;
+            }
 
             byte[] req = new byte[d.OutLen > 0 ? d.OutLen : 64];
             List<byte> reply = null;

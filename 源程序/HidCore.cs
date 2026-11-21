@@ -30,6 +30,41 @@ namespace TriMode
             public ushort NumberFeatureDataIndices;
         }
         [StructLayout(LayoutKind.Sequential)]
+        public struct HIDP_VALUE_CAPS
+        {
+            public ushort UsagePage;
+            public byte ReportID;
+            public byte IsAlias;
+            public ushort BitField;
+            public ushort LinkCollection;
+            public ushort LinkUsage;
+            public ushort LinkUsagePage;
+            public byte IsRange;
+            public byte IsStringRange;
+            public byte IsDesignatorRange;
+            public byte IsAbsolute;
+            public byte HasNull;
+            public byte Reserved;
+            public ushort BitSize;
+            public ushort ReportCount;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 5)] public ushort[] Reserved2;
+            public uint UnitsExp;
+            public uint Units;
+            public int LogicalMin;
+            public int LogicalMax;
+            public int PhysicalMin;
+            public int PhysicalMax;
+            public ushort UsageMin;
+            public ushort UsageMax;
+            public ushort StringMin;
+            public ushort StringMax;
+            public ushort DesignatorMin;
+            public ushort DesignatorMax;
+            public ushort DataIndexMin;
+            public ushort DataIndexMax;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         public struct OVERLAPPED2 { public IntPtr Internal; public IntPtr InternalHigh; public int Offset; public int OffsetHigh; public IntPtr hEvent; }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -105,6 +140,15 @@ namespace TriMode
         public static extern bool HidD_FreePreparsedData(IntPtr data);
         [DllImport("hid.dll", SetLastError = true)]
         public static extern int HidP_GetCaps(IntPtr data, ref HIDP_CAPS caps);
+        [DllImport("hid.dll", SetLastError = true)]
+        public static extern bool HidD_SetFeature(IntPtr h, byte[] buffer, int length);
+        [DllImport("hid.dll", SetLastError = true)]
+        public static extern bool HidD_GetFeature(IntPtr h, byte[] buffer, int length);
+        [DllImport("hid.dll")]
+        public static extern int HidP_GetValueCaps(int reportType, [Out] HIDP_VALUE_CAPS[] caps, ref ushort length, IntPtr preparsed);
+        [DllImport("hid.dll")]
+        public static extern int HidP_GetUsageValue(int reportType, ushort usagePage, ushort linkCollection,
+            ushort usage, out uint value, IntPtr preparsed, byte[] report, int reportLength);
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         public static extern IntPtr CreateFile(string name, uint access, uint share, IntPtr sec, uint create, uint flags, IntPtr tmpl);
@@ -262,6 +306,106 @@ namespace TriMode
             string[] parts = p.Split('#');
             if (parts.Length < 3) return p;
             return parts[0].ToUpperInvariant() + @"\" + parts[1].ToUpperInvariant() + @"\" + string.Join("#", parts, 2, parts.Length - 2);
+        }
+
+        // Standard HID Battery Strength: Generic Device Controls 0x06/0x20 or
+        // Battery System 0x85/0x64, exposed as a feature report. No vendor
+        // commands are sent; devices without these fields are left untouched.
+        public static int ReadStandardBattery(HidIface info, out DevKind kind)
+        {
+            kind = DevKind.Other;
+            IntPtr h = Native.CreateFile(info.Path, 0,
+                Native.FILE_SHARE_READ | Native.FILE_SHARE_WRITE, IntPtr.Zero,
+                Native.OPEN_EXISTING, 0, IntPtr.Zero);
+            if (h == IntPtr.Zero) return -1;
+            IntPtr pp = IntPtr.Zero;
+            try
+            {
+                if (!Native.HidD_GetPreparsedData(h, out pp)) return -1;
+                Native.HIDP_CAPS caps = new Native.HIDP_CAPS();
+                caps.Reserved = new ushort[17];
+                if (Native.HidP_GetCaps(pp, ref caps) < 0) return -1;
+                if (caps.NumberFeatureValueCaps == 0 || caps.FeatureReportByteLength == 0) return -1;
+
+                Native.HIDP_VALUE_CAPS[] values = new Native.HIDP_VALUE_CAPS[caps.NumberFeatureValueCaps];
+                for (int i = 0; i < values.Length; i++) values[i].Reserved2 = new ushort[5];
+                ushort length = caps.NumberFeatureValueCaps;
+                int status = Native.HidP_GetValueCaps(2, values, ref length, pp);
+                if (status != 0x00110000) return -1;
+
+                for (int i = 0; i < length; i++)
+                {
+                    Native.HIDP_VALUE_CAPS v = values[i];
+                    ushort usage;
+                    if (v.UsagePage == 0x0006) usage = 0x0020;
+                    else if (v.UsagePage == 0x0085) usage = 0x0064;
+                    else continue;
+
+                    if (v.BitSize > 32 || v.ReportCount < 1) continue;
+                    if (v.IsRange != 0)
+                    {
+                        if (v.UsageMin <= usage && usage <= v.UsageMax) { }
+                        else continue;
+                    }
+                    else if (v.UsageMin != usage) continue;
+
+                    byte[] report = new byte[caps.FeatureReportByteLength];
+                    report[0] = v.ReportID;
+                    if (!Native.HidD_GetFeature(h, report, report.Length)) continue;
+                    uint raw;
+                    if (Native.HidP_GetUsageValue(2, v.UsagePage, v.LinkCollection, usage,
+                        out raw, pp, report, report.Length) != 0x00110000) continue;
+                    if (v.LogicalMax <= v.LogicalMin) continue;
+                    int value = (int)raw;
+                    if (value < v.LogicalMin || value > v.LogicalMax) continue;
+                    int level = (int)Math.Round((value - v.LogicalMin) * 100.0 / (v.LogicalMax - v.LogicalMin));
+                    if (level < 0 || level > 100) continue;
+
+                    if (caps.UsagePage == 1 && caps.Usage == 2) kind = DevKind.Mouse;
+                    else if (caps.UsagePage == 1 && caps.Usage == 6) kind = DevKind.Keyboard;
+                    return level;
+                }
+            }
+            catch { }
+            finally
+            {
+                if (pp != IntPtr.Zero) Native.HidD_FreePreparsedData(pp);
+                Native.CloseHandle(h);
+            }
+            return -1;
+        }
+
+        public static byte[] FeatureZeroAccess(string path, byte[] request, int length)
+        {
+            IntPtr h = Native.CreateFile(path, 0,
+                Native.FILE_SHARE_READ | Native.FILE_SHARE_WRITE, IntPtr.Zero,
+                Native.OPEN_EXISTING, 0, IntPtr.Zero);
+            if (h == IntPtr.Zero) return null;
+            try
+            {
+                if (!Native.HidD_SetFeature(h, request, request.Length)) return null;
+                System.Threading.Thread.Sleep(80);
+                byte[] reply = new byte[length];
+                return Native.HidD_GetFeature(h, reply, reply.Length) ? reply : null;
+            }
+            finally { Native.CloseHandle(h); }
+        }
+
+        // Feature report exchange: SetFeature(request) -> GetFeature(report id).
+        public static byte[] Feature(string path, byte[] request, int length)
+        {
+            IntPtr h = Native.CreateFile(path, Native.GENERIC_READ | Native.GENERIC_WRITE,
+                Native.FILE_SHARE_READ | Native.FILE_SHARE_WRITE, IntPtr.Zero,
+                Native.OPEN_EXISTING, 0, IntPtr.Zero);
+            if (h == IntPtr.Zero) return null;
+            try
+            {
+                if (!Native.HidD_SetFeature(h, request, request.Length)) return null;
+                System.Threading.Thread.Sleep(120);
+                byte[] reply = new byte[Math.Max(13, length)];
+                return Native.HidD_GetFeature(h, reply, reply.Length) ? reply : null;
+            }
+            finally { Native.CloseHandle(h); }
         }
 
         // report = payload including report id as byte 0
