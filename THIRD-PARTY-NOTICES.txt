@@ -8,3 +8,16 @@ AirPods protocol/state logic is based on AirPodsDesktop
 (https://github.com/SpriteOvO/AirPodsDesktop, GPLv3).
 The helper reimplements the Apple Continuity Proximity Pairing packet parsing
 for local device status display.
+
+
+GearBattery (MIT License)
+https://github.com/emrebardak/GearBattery
+ATK mouse/keyboard HID battery protocol reference.
+
+HaloBattery (MIT License)
+https://github.com/HeyOkay/HaloBattery
+AULA 2.4G keyboard HID battery protocol reference.
+
+Viper Tray (MIT License)
+https://github.com/damianyoko/viper-tray
+Razer HID feature-report battery protocol reference.
