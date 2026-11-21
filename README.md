@@ -4,7 +4,7 @@
 
 - 单文件绿色程序，无需安装：`电环.exe`
 - 托盘常驻，关闭窗口只是收进托盘，托盘右键可退出
-- 每 2 秒刷新一次；设备休眠时回落显示上次读数
+- 每 2 秒刷新一次；设备休眠时回落显示缓存读数并标注「休眠中」
 - 电量读取：标准 HID Battery Strength 字段，外加迈从（MCHOSE）、罗技 HID++、ATK、AULA（狼蛛）、雷蛇（Razer）、Compx（Pulsar / VXE 等）2.4G 私有协议
 
 ## 界面预览
@@ -97,6 +97,8 @@ Apple 设备单独参考 [AirPodsDesktop](https://github.com/SpriteOvO/AirPodsDe
 - **任务栏电量**：在任务栏通知区域左侧按设备排列类型图标与电量百分比，颜色跟随主题色；默认开启，托盘右键「任务栏电量」或设置页「系统 → 任务栏电量」可开关，无在线设备时自动隐藏。
 
 ## 修订记录
+
+- 2026-11-21 HID 句柄共存：HidCore.Feature 报文交换先以零访问权限（feature-only）打开设备，避免与占用读写句柄的厂商软件冲突；SetFeature 失败时再回退到读写句柄重试。
 
 - 2026-11-21 扩展协议与品牌识别：新增标准 HID Battery Strength（Usage 0x06/0x20、0x85/0x64）读取通道；2.4G 私有协议覆盖迈从 MCHOSE（VID 0x5253 / 0x3837）、罗技 HID++（VID 0x046D）、ATK（VID 0x373B）、AULA 狼蛛（VID 0x0C45）、雷蛇 Razer（VID 0x1532）、Compx 族（Pulsar / VXE 等，0xFF02/0x0002 接口）；HidCore 补充 Feature 报文交换与标准值能力解析；THIRD-PARTY-NOTICES 补 GearBattery、HaloBattery、Viper Tray 三个 MIT 协议参考。
 
