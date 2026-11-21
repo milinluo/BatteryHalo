@@ -394,13 +394,23 @@ namespace TriMode
         // Feature report exchange: SetFeature(request) -> GetFeature(report id).
         public static byte[] Feature(string path, byte[] request, int length)
         {
-            IntPtr h = Native.CreateFile(path, Native.GENERIC_READ | Native.GENERIC_WRITE,
+            // Feature-only access is enough and lets the device coexist with
+            // vendor software that keeps a read/write handle open.
+            IntPtr h = Native.CreateFile(path, 0,
                 Native.FILE_SHARE_READ | Native.FILE_SHARE_WRITE, IntPtr.Zero,
                 Native.OPEN_EXISTING, 0, IntPtr.Zero);
             if (h == IntPtr.Zero) return null;
             try
             {
-                if (!Native.HidD_SetFeature(h, request, request.Length)) return null;
+                if (!Native.HidD_SetFeature(h, request, request.Length))
+                {
+                    Native.CloseHandle(h);
+                    h = Native.CreateFile(path, Native.GENERIC_READ | Native.GENERIC_WRITE,
+                        Native.FILE_SHARE_READ | Native.FILE_SHARE_WRITE, IntPtr.Zero,
+                        Native.OPEN_EXISTING, 0, IntPtr.Zero);
+                    if (h == IntPtr.Zero) return null;
+                    if (!Native.HidD_SetFeature(h, request, request.Length)) return null;
+                }
                 System.Threading.Thread.Sleep(120);
                 byte[] reply = new byte[Math.Max(13, length)];
                 return Native.HidD_GetFeature(h, reply, reply.Length) ? reply : null;
